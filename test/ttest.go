@@ -147,6 +147,61 @@ func SubtestSimpleWrite(t *testing.T, tr smux.Transport) {
 	log("done")
 }
 
+func SubtestWriteCloses(t *testing.T, tr smux.Transport) {
+	a, b := net.Pipe()
+
+	c1, err := tr.NewConn(a, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c2, err := tr.NewConn(b, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := 1000
+	runners := 10
+
+	stress := func() {
+		for i := 0; i < count; i++ {
+			s, err := c2.OpenStream()
+			if err != nil {
+				t.Error(err)
+			}
+
+			s.Write([]byte("hello"))
+			s.Write([]byte("world"))
+			s.Close()
+		}
+	}
+
+	for i := 0; i < runners; i++ {
+		go stress()
+	}
+
+	wg := sync.WaitGroup{}
+	buf := make([]byte, 20)
+	for i := 0; i < runners*count; i++ {
+		s, err := c1.AcceptStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		wg.Add(1)
+		go func(s smux.Stream) {
+			defer wg.Done()
+			n, _ := io.ReadFull(s, buf)
+
+			if !bytes.Equal(buf[:n], []byte("helloworld")) {
+				t.Error("got wrong data!", string(buf[:n]))
+			}
+			s.Close()
+		}(s)
+	}
+	wg.Wait()
+}
+
 func SubtestStress(t *testing.T, opt Options) {
 
 	msgsize := 1 << 11
@@ -431,6 +486,7 @@ func SubtestAll(t *testing.T, tr smux.Transport) {
 		SubtestStress1Conn1000Stream10Msg,
 		SubtestStress1Conn100Stream100Msg10MB,
 		SubtestStreamOpenStress,
+		SubtestWriteCloses,
 	}
 
 	for _, f := range tests {
